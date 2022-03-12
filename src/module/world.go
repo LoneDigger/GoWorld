@@ -22,6 +22,7 @@ type world struct {
 	moveCh   chan bundle.PosBroadcast //移動
 	exitCh   chan uint32              //離開
 	players  *client.Players
+	hz       chan *client.Client //更新畫面
 }
 
 func newWorld(name string, p size.Point, split int) *world {
@@ -47,12 +48,13 @@ func newWorld(name string, p size.Point, split int) *world {
 		moveCh:   make(chan bundle.PosBroadcast, utils.ChannelCount),
 		exitCh:   make(chan uint32, utils.ChannelCount),
 		players:  client.NewPlayer(),
+		hz:       make(chan *client.Client),
 	}
 }
 
 // 加入世界
 func (w *world) Add(id uint32, name string, prot session.SessionHandle) {
-	client := client.NewClient(id, name, w.moveCh, w.exitCh, prot)
+	client := client.NewClient(id, name, w.moveCh, w.exitCh, w.hz, prot)
 
 	//隨機位置
 	p := size.Point{
@@ -143,7 +145,6 @@ func (w *world) callMove(m bundle.PosBroadcast) {
 
 	//新座標
 	client.SetPosition(m.Point)
-	w.distribute(newX, newY, m)
 }
 
 // 移除玩家
@@ -170,13 +171,6 @@ func (w *world) checkEcho() {
 	}
 }
 
-// 轉發移動
-func (w *world) distribute(posX, posY int, p bundle.PosBroadcast) {
-	arr := w.roundArea(posX, posY)
-	for _, a := range arr {
-		w.areas[a.X][a.Y].Move(p)
-	}
-}
 func (w *world) exitLoop(ctx context.Context) {
 	for {
 		select {
@@ -291,6 +285,7 @@ func (w *world) Start(ctx context.Context) {
 	go w.moveLoop(ctx)
 	go w.exitLoop(ctx)
 	go w.heartbeat(ctx)
+	go w.updateLoop(ctx)
 }
 
 // 取得周圍
@@ -327,4 +322,38 @@ func (w *world) posToAreaID(p size.Point) int {
 // 區域位置轉成編號
 func (w *world) areaPosToID(p size.Point) int {
 	return p.X + p.Y*w.split
+}
+
+// 更新
+func (w *world) updateLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case c := <-w.hz:
+			w.distribute(c)
+		}
+	}
+}
+
+// 轉發移動
+func (w *world) distribute(c *client.Client) {
+	p := w.idToPos(c.AreaID())
+	arr := w.roundArea(p.X, p.Y)
+
+	for _, a := range arr {
+		players := w.areas[a.X][a.Y].players.Clone()
+		for _, p := range players {
+			if p.ID() != c.ID() {
+				c.Send(bundle.Broadcast{
+					Code: bundle.MoveBcstCode,
+					Message: bundle.PosBroadcast{
+						ID:    p.ID(),
+						Point: p.Position(),
+					},
+				})
+			}
+		}
+	}
 }

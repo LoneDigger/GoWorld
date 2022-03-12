@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net"
@@ -18,17 +19,20 @@ type Client struct {
 	id         uint32                   //玩家編號
 	name       string                   //顯示名稱
 	position   size.Point               //當前座標
-	vision     *Vision                  //區域
-	moveCh     chan bundle.PosBroadcast //移動
-	exitCh     chan uint32              //離開
+	vision     *Vision                  //可見區域
+	moveCh     chan bundle.PosBroadcast //移動通道
+	exitCh     chan uint32              //離開通道通道
 	moveUpdate time.Time                //上次更新時間
 	echoUpdate time.Time                //回應時間
 	lock       deadlock.Mutex           //鎖
-	closed     bool
-	prot       session.SessionHandle
+	closed     bool                     //已關閉
+	prot       session.SessionHandle    //通訊
+	cancel     context.CancelFunc       //取消 go
+	updateCh   chan *Client             //狀態更新通道
 }
 
-func NewClient(id uint32, name string, moveCh chan bundle.PosBroadcast, exitCh chan uint32, prot session.SessionHandle) *Client {
+func NewClient(id uint32, name string, moveCh chan bundle.PosBroadcast, exitCh chan uint32,
+	updateCh chan *Client, prot session.SessionHandle) *Client {
 	return &Client{
 		id:         id,
 		name:       name,
@@ -39,6 +43,7 @@ func NewClient(id uint32, name string, moveCh chan bundle.PosBroadcast, exitCh c
 		moveUpdate: time.Now(),
 		echoUpdate: time.Now(),
 		closed:     false,
+		updateCh:   updateCh,
 	}
 }
 
@@ -91,14 +96,16 @@ func (c *Client) Close() {
 
 	logrus.WithField("client_id", c.id).Info("close")
 
+	c.cancel()
 	err := c.prot.Close()
-	c.closed = true
 
 	if err != nil {
 		logrus.WithError(err).Error()
 	}
+	c.closed = true
 }
 
+// 回應時間(秒)
 func (c *Client) EchoTime() int {
 	return int(time.Since(c.echoUpdate).Seconds())
 }
@@ -114,7 +121,10 @@ func (c *Client) Init(areaID int, pos size.Point) {
 	c.vision.SetMain(areaID)
 	c.moveUpdate = time.Now()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancel = cancel
 	go c.receive()
+	go c.updateLoop(ctx)
 
 	c.Send(bundle.Broadcast{
 		Code: bundle.AddAckCode,
@@ -147,6 +157,7 @@ func (c *Client) receive() {
 		//io: read/write on closed pipe
 		err = c.prot.Read(&b)
 		if err != nil {
+			c.cancel()
 			return
 		}
 
@@ -178,33 +189,6 @@ func (c *Client) RemoveArea(id int) {
 	c.vision.Remove(id)
 }
 
-// 變更中心
-func (c *Client) SetAreaID(id int) {
-	c.vision.SetMain(id)
-}
-
-// 送出關閉
-func (c *Client) SendClose() {
-	c.Send(bundle.Broadcast{
-		Code:    bundle.CloseCode,
-		Message: bundle.CloseResponse{},
-	})
-}
-
-// 設定座標
-func (c *Client) SetPosition(p size.Point) {
-	c.position = p
-	c.moveUpdate = time.Now()
-
-	//送出新座標
-	c.Send(bundle.Broadcast{
-		Code: bundle.DegreeAckCode,
-		Message: bundle.DegreeResponse{
-			Point: p,
-		},
-	})
-}
-
 func (c *Client) Send(b bundle.Broadcast) {
 	c.lock.Lock()
 
@@ -223,6 +207,48 @@ func (c *Client) Send(b bundle.Broadcast) {
 			// io: read/write on closed pipe
 			logrus.WithError(err).WithField("addr", c.prot.RemoteAddr()).Error("sendLoop")
 			c.Close()
+		}
+	}
+}
+
+// 送出關閉
+func (c *Client) SendClose() {
+	c.Send(bundle.Broadcast{
+		Code:    bundle.CloseCode,
+		Message: bundle.CloseResponse{},
+	})
+}
+
+// 變更中心
+func (c *Client) SetAreaID(id int) {
+	c.vision.SetMain(id)
+}
+
+// 設定座標
+func (c *Client) SetPosition(p size.Point) {
+	c.position = p
+	c.moveUpdate = time.Now()
+
+	//送出新座標
+	c.Send(bundle.Broadcast{
+		Code: bundle.DegreeAckCode,
+		Message: bundle.DegreeResponse{
+			Point: p,
+		},
+	})
+}
+
+func (c *Client) updateLoop(ctx context.Context) {
+	t := time.NewTicker(utils.UpdateCD)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			c.updateCh <- c
+			t.Reset(utils.UpdateCD)
 		}
 	}
 }

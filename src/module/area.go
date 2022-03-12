@@ -3,23 +3,18 @@ package module
 import (
 	"context"
 
-	"me.game/src/bundle"
 	"me.game/src/client"
 	"me.game/src/utils"
 )
 
-// 世界中一小區域
+// 區域
 type Area struct {
-	id      int //區域編號
-	players *client.Players
-
-	addCh    chan *client.Client
-	removeCh chan *client.Client
-
-	addBcst    chan *client.Client
-	removeBcst chan *client.Client
-
-	moveCh chan bundle.PosBroadcast
+	id         int                 //區域編號
+	players    *client.Players     //當前區域內玩家
+	addCh      chan *client.Client //進入通道
+	removeCh   chan *client.Client //出來通道
+	addBcst    chan *client.Client //進入廣播通道
+	removeBcst chan *client.Client //出來廣播通道
 }
 
 func NewAres(id int) *Area {
@@ -30,7 +25,6 @@ func NewAres(id int) *Area {
 		removeCh:   make(chan *client.Client, utils.ChannelCount),
 		addBcst:    make(chan *client.Client, utils.ChannelCount),
 		removeBcst: make(chan *client.Client, utils.ChannelCount),
-		moveCh:     make(chan bundle.PosBroadcast, utils.ChannelCount),
 	}
 }
 
@@ -81,26 +75,9 @@ func (a *Area) ID() int {
 	return a.id
 }
 
-// 移動廣播
-func (a *Area) Move(pos bundle.PosBroadcast) {
-	a.moveCh <- pos
-}
-
-func (a *Area) moveLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		case pos := <-a.moveCh: //玩家移動廣播
-			b := bundle.Broadcast{
-				Code:    bundle.MoveBcstCode,
-				Message: pos,
-			}
-
-			a.players.Move(pos.ID, b)
-		}
-	}
+// 複製玩家清單
+func (a *Area) Clone() []*client.Client {
+	return a.players.Clone()
 }
 
 // 移除廣播
@@ -113,9 +90,14 @@ func (a *Area) RemoveClient(client *client.Client) {
 	a.removeCh <- client
 }
 
-// 啟動
 func (a *Area) Start(ctx context.Context) {
 	go a.bcstLoop(ctx)
 	go a.clientLoop(ctx)
-	go a.moveLoop(ctx)
+}
+
+func (a *Area) Stop() {
+	close(a.addCh)
+	close(a.removeCh)
+	close(a.addBcst)
+	close(a.removeBcst)
 }

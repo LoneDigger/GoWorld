@@ -2,6 +2,7 @@ package config
 
 import "me.game/src/size"
 
+// 設定
 type Config struct {
 	Protocol string     //協定
 	Port     int        //埠號

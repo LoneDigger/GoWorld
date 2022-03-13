@@ -21,13 +21,13 @@ type Client struct {
 	position   size.Point               //當前座標
 	vision     *Vision                  //可見區域
 	moveCh     chan bundle.PosBroadcast //移動通道
-	exitCh     chan uint32              //離開通道通道
+	exitCh     chan uint32              //離開通道
 	moveUpdate time.Time                //上次更新時間
 	echoUpdate time.Time                //回應時間
 	lock       deadlock.Mutex           //鎖
 	closed     bool                     //已關閉
 	prot       session.SessionHandle    //通訊
-	cancel     context.CancelFunc       //取消 go
+	cancel     context.CancelFunc       //取消
 	updateCh   chan *Client             //狀態更新通道
 }
 

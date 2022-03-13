@@ -11,9 +11,6 @@ import (
 	"me.game/src/utils"
 )
 
-// var password = []byte("Arw8ptUoEe")
-// var salt = []byte("lsXSCvYDnn")
-
 type kcpServer struct {
 	listener *kcp.Listener
 	core     module.CoreHandle

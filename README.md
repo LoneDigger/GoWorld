@@ -25,5 +25,5 @@
 會取消 102、103、104 區塊訂閱  
 並訂閱新區塊 42、43、44  
 
-[測試用客戶端](https://github.com/LoneDigger/GoPlayer)
+[測試用客戶端](https://github.com/LoneDigger/GoPlayer)  
 [測試影片](https://imgur.com/3cRvlu3)
